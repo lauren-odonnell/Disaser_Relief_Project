@@ -1,4 +1,4 @@
-# 6030_Haiti_Project
+# Disaster_Relief_Project
 Haiti Disaster Relief Project
 
 This project was started as a class requirement for my master's. The goal was to utilize several statistical learning methods to evaluate the optimal algorithm for predicting whether or not a pixel contains a blue tarp from RGB data. Data was provided by the professor initially as one file for part one to train, then eight additional .csv files were provided as a holdout set for testing algorithm performance with the holdout set.
