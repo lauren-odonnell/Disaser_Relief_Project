@@ -7,4 +7,4 @@ This project that started with a simple learning objective can used including ac
 
 R was the language utilized to conduct this study and R Studio was the IDE of choice.
 
-Contained within this repo are the data files used, image examples, the .Rmd file containg the project, and a .html of the final project. I recommend viewing the project in the .html, which displays all code used throughout the project. 
+Contained within this repo are the data files used, image examples, the .Rmd file containg the project, and a .html of the final project. To view the final knitted report, you can navigate to https://lauren-odonnell.github.io/
