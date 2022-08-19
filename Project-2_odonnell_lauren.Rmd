@@ -1,0 +1,1943 @@
+---
+title: "Disaster Relief Project 2"
+author: "Lauren O'Donnell (qsq6zz)"
+date: "August 14, 2022"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+    number_sections: true
+    fig_caption: yes
+---
+
+<!--- Below are global settings for knitr. You can override any of them by adding the changes to individual chunks --->
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(error = TRUE,        # Keep compiling upon error
+                      collapse = FALSE,    # collapse by default
+                      echo = TRUE,         # echo code by default
+                      comment = "#>",      # change comment character
+                      fig.width = 5.5,     # set figure width
+                      fig.align = "center",# set figure position
+                      out.width = "49%",   # set width of displayed images
+                      warning = FALSE,     # do not show R warnings
+                      message = FALSE)     # do not show R messages
+```
+
+<!--- Change font size for headers --->
+
+```{=html}
+<style>
+h1.title { font-size: 28px; }
+h1 { font-size: 22px; }
+h2 { font-size: 18px; }
+h3 { font-size: 14px; }
+</style>
+```
+\pagebreak
+
+# Introduction
+
+## Abstract
+Following a 7.0 earthquake, Haiti was left devastated and many of its residents were left displaced from their home. Communication systems were down and roads were not in a usable state. In response, aerial images were taken to identify blue tarps, used as make-shift shelters by the displaced Haitians. This study was designed to develop an algorithm to best identify blue tarps from aerial images.
+
+Algorithmic methods logistic regression, linear discriminant analysis, quadratic discriminant analysis, k-nearest neighbors, ridge regression, random forest, and support vector machines were used to develop models and algorithms to recognize blue tarps amid the devastated terrain of Haiti. Two models were generated, one with the features $Red$, $Green$, and $Blue$ from the pixel makeup and a second model for each method with the color features and an additional interaction effect between $Green$ and $Blue$ when predicting the response $Bluetarp$. Following analysis, many of the methods performed well in identifying blue tarps from aerial images. The best performing method with the training set was the support vector machines model containing no interaction effect while the best performing model with the holdout data was the logistic regression model containing the interaction effect. The overall best performing model, however, was a logistic regression model containing only features of $Red$, $Green$, and $Blue$ and no interaction effect. This model was selected due to its lesser complexity, decent performance with the smaller training set, and high performance with the holdout set, returning and accuracy of 99.866%. This model was also selected as the false negative rate was impressively low at 0.072%, which reduced the rate of missing a blue tarp and minimized the chances of mis-identifying a pixel in the image as having a blue tarp when it does not.
+
+## Data Introduction
+
+Haiti was left devastated following a massive earthquake in 2010. Many Haitians were displaced from their destroyed homes, communication systems left unusable, and roads impassable. Displaced Haitians lived in makeshift shelters, using a blue tarp as a cover and easy identifier for deployed rescue workers to assist with recovery efforts. A team from the Rochester Institute of Technology took aerial photos of Haiti to identify the location of blue tarps and displaced Haitians. These aerial photographs were dissected pixel-by-pixel and analyzed to determine the Red-Green-Blue (RGB) makeup of the pixel and categorized into their appropriate class ($Blue Tarp$, $Rooftop$, $Soil$, $Various \ Non-Tarp$, or $Vegetation$).
+
+This study is intended to determine an appropriate algorithm to identify a blue tarp based on the RGB combined quantities of the pixel. Algorithms will be analyzed and compared based on accuracy to ensure rescue workers can quickly and efficiently deliver supplies and assist displaced Haitians during the recovery.
+```{r Haiti Images, figures-side, fig.show = "hold", out.width = "45%", fig.cap = "Haiti Makeshift Villages"}
+knitr::include_graphics(c("orthovnir071_makeshift_villiage1.jpg", 
+                   "orthovnir071_makeshift_villiage2.jpg",
+                   "orthovnir078_makeshift_villiage1.jpg"))
+```
+
+# Data Wrangling & Exploratory Data Analysis
+
+## Data Wrangling
+Little wrangling was required on the training data set. All observations were complete with no missing values. To prepare the data set for analysis, new factor variable $Bluetarp$ was created by mutating `Data$Class` and classifying all observations identified as "Blue Tarp" as "Yes" and all other observations as "No". The $Bluetarp$ variable was then converted to a factor and the $Class$ was dropped from the data set and the data set was names `Train`. 
+
+The holdout set was provided in eight separate .csv files. Each file was imported and scrubbed of unneeded comments and headers. The `read.csv()` read the file in adding additional columns in the header, likely due to the opening semi colon, and thus the header was removed. Columns 1-5 were removed from the data set for seven of the eight .csv files (one did not contain the additional columns), as they contained information not required for analysis. Finally, a column was added to each of the .csv files notating as a factor if it was a blue tarp or not, as indicated by the file name, and merged together into a single data frame. The final data frame for the holdout set, `Holdout` contains latitude, longitude, color variables, and whether the pixel is a blue tarp or not. 
+
+```{r Libraries and Cores}
+# required libraries
+library(tidyverse)
+library(MASS)
+library(caret)
+library(GGally)
+library(kableExtra)
+library(leaps)
+library(ROCR)
+library(gridExtra)
+library(knitr)
+library(broom)
+library(tictoc)
+library(randomForest)
+library(tree)
+
+# Determine number of cores and initialize cluster
+library(parallel)
+library(doParallel)
+no_cores <- detectCores() - 2
+cl <- makePSOCKcluster(no_cores)
+registerDoParallel(cl)
+```
+
+```{r Data Imports}
+# importing training set
+Data <- read.csv("HaitiPixels.csv", header = TRUE)
+
+# importing holdout sets
+data057.nottarp <- read.csv("orthovnir057_ROI_NON_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+data067.tarp <- read.csv("orthovnir067_ROI_Blue_Tarps_data.txt", 
+                            header = FALSE, skip = 1, sep = "")
+data067.tarp2 <- read.csv("orthovnir067_ROI_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+data067.nottarp <- read.csv("orthovnir067_ROI_NOT_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+data069.tarp <- read.csv("orthovnir069_ROI_Blue_Tarps.txt", 
+                         header = FALSE, skip = 8, sep = "")
+data069.nottarp <- read.csv("orthovnir069_ROI_NOT_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+data078.tarp <- read.csv("orthovnir078_ROI_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+data078.nottarp <- read.csv("orthovnir078_ROI_NON_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+```
+
+```{r Wrangling Train Set}
+# creating new binary variable that is acknowledging either a blue tarp or not
+Data <- Data %>%
+  mutate(Bluetarp = ifelse(Data$Class == "Blue Tarp", "Yes", "No"))
+
+# converting Bluetarp to factor
+Data$Bluetarp <- as.factor(Data$Bluetarp)
+
+# dropping unnecessary Class feature
+Train <- Data[,c(2:5)]
+```
+
+```{r Wrangling Holdout Set}
+# dropping unnecessary columns
+# no changes to data067.tarp - no columns to drop
+data057.nottarp <- data057.nottarp[,c(8:10)]
+data067.tarp2 <- data067.tarp2[,c(8:10)]
+data067.nottarp <- data067.nottarp[,c(8:10)]
+data069.tarp <- data069.tarp[,c(8:10)]
+data069.nottarp <- data069.nottarp[,c(8:10)]
+data078.tarp <- data078.tarp[,c(8:10)]
+data078.nottarp <- data078.nottarp[,c(8:10)]
+
+# renaming columns
+colnames = c("Red" = "V8", "Green" = "V9", "Blue" = "V10")
+
+data057.nottarp <- data057.nottarp %>%
+  rename(colnames)
+data067.tarp <- data067.tarp %>%
+  rename(c("Red" = "V1", "Green" = "V2", "Blue" = "V3"))
+data067.tarp2 <- data067.tarp2 %>%
+  rename(colnames)
+data067.nottarp <- data067.nottarp %>%
+  rename(colnames)
+data069.tarp <- data069.tarp %>%
+  rename(colnames)
+data069.nottarp <- data069.nottarp %>%
+  rename(colnames)
+data078.tarp <- data078.tarp %>%
+  rename(colnames)
+data078.nottarp <- data078.nottarp %>%
+  rename(colnames)
+
+# adding factor column identifying tarp or not
+data057.nottarp <- data057.nottarp %>%
+  mutate(Bluetarp = "No")
+data057.nottarp$Bluetarp <- as.factor(data057.nottarp$Bluetarp)
+
+data067.tarp <- data067.tarp %>%
+  mutate(Bluetarp = "Yes")
+data067.tarp$Bluetarp <- as.factor(data067.tarp$Bluetarp)
+
+data067.tarp2 <- data067.tarp2 %>%
+  mutate(Bluetarp = "Yes")
+data067.tarp2$Bluetarp <- as.factor(data067.tarp2$Bluetarp)
+
+data067.nottarp <- data067.nottarp %>%
+  mutate(Bluetarp = "No")
+data067.nottarp$Bluetarp <- as.factor(data067.nottarp$Bluetarp)
+
+data069.tarp <- data069.tarp %>%
+  mutate(Bluetarp = "Yes")
+data069.tarp$Bluetarp <- as.factor(data069.tarp$Bluetarp)
+
+data069.nottarp <- data069.nottarp %>%
+  mutate(Bluetarp = "No")
+data069.nottarp$Bluetarp <- as.factor(data069.nottarp$Bluetarp)
+
+data078.tarp <- data078.tarp %>%
+  mutate(Bluetarp = "Yes")
+data078.tarp$Bluetarp <- as.factor(data078.tarp$Bluetarp)
+
+data078.nottarp <- data078.nottarp %>%
+  mutate(Bluetarp = "No")
+data078.nottarp$Bluetarp <- as.factor(data078.nottarp$Bluetarp)
+```
+
+```{r Holdout Set Merge}
+Holdout <- bind_rows(data057.nottarp, data067.tarp, data067.tarp2, 
+                     data067.nottarp, data069.tarp, data069.nottarp, 
+                     data078.tarp, data078.nottarp)
+Holdout$Bluetarp <- relevel(Holdout$Bluetarp, "No")
+```
+
+```{r Holdout Sample for Testing Code}
+# used for testing code only - this will not be used for actual performance
+set.seed(1)
+Sample <- Holdout %>%
+  sample_frac(0.1)
+```
+
+
+## Exploratory Data Analysis
+Exploratory data analysis (EDA) was conducted on both the training and holdout data sets. The training set was first evaluated to explore the data, find relationships, and help provide direction on which model(s) would be best fit to predict blue tarps from aerial images during disaster relief efforts. Following training set EDA, EDA was conducted on the holdout set to determine if there were similarities or differences between the two data sets. \
+\
+To prepare for EDA, several functions were generated to streamline visualizations and analysis. 
+```{r EDA Tables Functions}
+table.classes <- function(data, title) {
+  data %>%
+    dplyr::count(Class) %>%
+    knitr::kable(caption = "Count of Various Classes", 
+                 col.names = c("Class", "Count")) %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kable_styling(latex_options = "HOLD_position")
+}
+
+table.tarps <- function(data, title) {
+  data %>%
+    dplyr::count(Bluetarp) %>%
+    knitr::kable(caption = title, 
+                 col.names = c("Blue Tarp", "Count")) %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kable_styling(latex_options = "HOLD_position")
+}
+```
+
+```{r EDA ggpairs Function}
+pairsplot <- function(data) {
+  data %>%
+  ggpairs(aes(alpha = 0.01, color = Bluetarp), 
+          lower = list(combo = wrap("facethist", binwidth = 0.5))) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+}
+```
+
+```{r EDA Density Plot Functions}
+all.densities <- function(data, title) {
+  ggplot(data) +
+    geom_density(aes(x = Red, color = "Red")) +
+    geom_density(aes(x = Green, color = "Green")) + 
+    geom_density(aes(x = Blue, color = "Blue")) +
+    labs(x = "RGB Density", title = title) +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    scale_color_manual(values = c('Red' = 'Red', 
+                                  'Green' = 'Dark Green', 
+                                  "Blue" = "Blue"))
+}
+
+tarp.densities <- function(data, title) {
+  ggplot(subset(data, Bluetarp == 'Yes')) +
+    geom_density(aes(x = Red, color = "Red")) +
+    geom_density(aes(x = Green, color = "Green")) + 
+    geom_density(aes(x = Blue, color = "Blue")) +
+    labs(x = "RGB Density", title = title) +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    scale_color_manual(values = c('Red' = 'Red', 
+                                  'Green' = 'Dark Green', 
+                                  "Blue" = "Blue"))
+}
+```
+
+
+
+
+### Training Set EDA
+\
+To begin EDA on the training data, tables were first created to display the frequency counts of each of the categories. The tables below made it clear there are far more pixels that do not contain a blue tarp as compared to those with a blue tarp.
+
+```{r Training EDA Tables, fig.cap = "Blue Tarp and Class Counts: Training Data"}
+table.classes(Data, "Count of Various Classes: Training Set")
+table.tarps(Data, "Count of Blue Tarps: Training Set")
+```
+
+```{r Training EDA Pairs Plot, cache = TRUE, dependson = "EDA ggpairs Function", out.width = "100%", fig.width = 8, fig.height = 6, fig.cap = "Variable Relationships: Training Data"}
+pairsplot(Data)
+```
+
+```{r Training EDA Combination Density Plot, fig.length=4, fig.width=7, message=FALSE, warning=FALSE, out.width="60%", fig.cap="Color Value Densities: Training Data"}
+all.densities(Data, "Color Value Densities of all Pixels: Training Set")
+```
+
+```{r Training EDA Combination Density Plot Blue Tarps Only, fig.length=4, fig.width=7, message=FALSE, warning=FALSE, out.width="60%", fig.cap="Color Value Densities of Blue Tarps: Training Set"}
+tarp.densities(Data, "Color Value Densities of Blue Tarps: Training Set")
+```
+The `ggpairs()` plot, Figure 2, revealed what appeared to be positive linear relationships between each of the quantitative RGB values based on the scatter plots. The density plots on Figure 2 showed a generally similar shape in densities for the $Red$ and $Green$ variables where there was a high density around 70 with a sharp decrease in density until around 200 where both started to increase.
+
+The box plots revealed what appeared to be little significance between the $Bluetarp$ variable and $Red$ as the means were very similar. The spread was also much greater for non-blue tarp pixels than pixels identified as a blue tarp; though, interestingly, the maximums are approximately the same. $Blue$ pixels appear to have the strongest relationship with $Bluetarp$s, as expected, seen by the greatest change in means from pixels with and without a blue tarp. $Green$ pixels appeared to have a similar, though not as strong as $Blue$, correlation with $Bluetarp$ identified pixels. This may be because visually blue and green appear similar to the human eye. 
+
+Figure 4 displays the density of the colors when the pixel contains a blue tarp. This reveals that the highest density of pixels that do have a blue tarp have a very high number (color density) of $Blue$ and tend to have lower color density values of $Red$ and $Green$. This aligns with what was observed with the `ggpairs()` plot as there tends to be a higher value of $Green$ than $Red$ when there is a blue tarp. 
+
+Based on these initial observations, an interaction term between $Green$ and $Blue$ would be appropriate and worth investigation. An interaction term between $Red$ and $Green$ will also be tested, again due to the human perception of color. Although color makeup itself is not necessarily the same as the human perception, due to the cones within the human eye, it would be worth investigating an interaction term between $Red$ and $Green$ as Red-Green colorblindness is the most common form of colorblindness. 
+
+### Holdout Set EDA
+\
+EDA was then conducted on the holdout set to determine if the training set is a good representative sample of the full data set. Because data was not provided on the class, EDA on the holdout set began with the table of counts of blue tarp pixels versus non-blue tarp pixels.
+```{r Holdout EDA Tables, fig.cap = "Blue Tarp and Class Counts: Holdout Data"}
+table.tarps(Holdout, "Count of Blue Tarps: Holdout Set")
+```
+
+```{r Holdout EDA Pairs Plot, cache = TRUE, dependson = "EDA ggpairs Function", out.width = "100%", fig.width = 8, fig.height = 6, fig.cap = "Variable Relationships: Holdout Data"}
+pairsplot(Holdout)
+```
+
+```{r Holdout EDA Combination Density Plot, fig.length=4, fig.width=7, message=FALSE, warning=FALSE, out.width="60%", fig.cap="Color Value Densities: Holdout Data"}
+all.densities(Holdout, "Color Value Densities of all Pixels: Holdout Set")
+```
+
+```{r Holdout EDA Combination Density Plot Blue Tarps Only, fig.length=4, fig.width=7, message=FALSE, warning=FALSE, out.width="60%", fig.cap="Color Value Densities of Blue Tarps: Holdout Set"}
+tarp.densities(Holdout, "Color Value Densities of Blue Tarps: Holdout Set")
+```
+Overall, the training and holdout data sets did vary in some key areas. The first observed difference was in the distribution of blue tarps in the overall data set. The training set contains 2022 total blue tarps, equating to 3.197% of the total data points in the training set. In contrast, the holdout set only contains 18,926 blue tarps, translating to 0.942%. This large difference could indicate the training set is not representative of the data set as a whole impacting the models performance when the holdout set is tested.
+
+When comparing the `ggpairs()` plots, the differences in the density plots stood out. All three of the density plots presented different distributions of each of the colors for both blue tarp and non-blue tarp pixels. The most dramatic difference was observed with the densities of the $Blue$ variable. This is likely due to the extremely small number of confirmed blue tarps in the holdout data set. The other color variables were also flatter than that of the training set, but the difference was not as dramatic as $Blue$. Other comparisons included in the `ggpairs()` plots were not as different, including the correlation values.
+
+Finally, when comparing the standalone density plots, specifically Figures 3 and 6 displaying the densities of blue tarps, there were noticeable differences in the densities of $Red$ and $Blue$. The density for $Green$ was also different, but appeared to have a more similar shape than the other two. $Red$ was sharply different in the lower value ranges. Contrasting, $Blue$ did not appear to have the same extreme peak in the holdout set as the training set on the high values of $Blue$. These differences indicated the training set is not very representative of the data set as a whole. 
+
+# Variable Selection
+
+Variable selection techniques were run before model training to determine the best variables for the model. Adjusted $R^2$, Mallow's $C_p$, and $BIC$ were first used to investigate the appropriate model followed by forward, backward, and stepwise selection. As the $Class$ variable was used directly to create the $Bluetarp$ response, $Class$ was not included in any of the models.
+
+```{r Model Section adj R2 Cp and BIC}
+regfit <- regsubsets(Bluetarp ~ ., data = Train)
+reg.summary <- summary(regfit)
+reg.summary
+```
+
+```{r adjR2 Cp BIC Plots Function}
+R2CPBIC <- function(reg) {
+  regfit <- regsubsets(reg, data = Train)
+  reg.summary <- summary(regfit)
+  
+  reg.summary <- regfit %>%
+    tidy()
+  
+  RSSs <- tibble(RSS = regfit$rss) %>% 
+  ggplot(aes(x = seq_along(RSS), y = RSS)) + 
+  geom_line() +
+  xlab("Number of Variables")
+  
+  adjR2s <- reg.summary %>%
+    ggplot(aes(x = seq_along(adj.r.squared), y = adj.r.squared)) +
+    geom_line() +
+    geom_point(reg.summary, color = 'red', size = 2.5,
+             mapping = aes(x = which.max(adj.r.squared), 
+                           y = max(adj.r.squared))) +
+    xlab("Number of Variables") 
+  
+  mallows_cps <- reg.summary %>%
+    ggplot(aes(x = seq_along(mallows_cp), y = mallows_cp)) +
+    geom_line() +
+    geom_point(reg.summary, color = 'red', size = 2.5,
+             mapping = aes(x = which.min(mallows_cp), y = min(mallows_cp))) +
+    xlab("Number of Variables") 
+  
+  BICs <- reg.summary %>%
+    ggplot(aes(x = seq_along(BIC), y = BIC)) + geom_line() +
+    geom_point(reg.summary, color = 'red', size = 2.5,
+             mapping = aes(x = which.min(BIC), y = min(BIC))) +
+    xlab("Number of Variables") 
+  
+  grid.arrange(RSSs, adjR2s, mallows_cps, BICs, nrow = 2)
+  
+  return(regfit)
+}
+```
+
+```{r Model Selection adj R2 Cp and BIC Variable Plots}
+R2CPBIC.var <- function (regfit) {
+  par(mfrow = c(1, 1))
+  
+  plot(regfit, scale = "r2")
+  plot(regfit, scale = "adjr2")
+  plot(regfit, scale = "Cp")
+  plot(regfit, scale = "bic")
+  
+}
+```
+
+```{r adjR2 Cp BIC Plots 3 Var Call, out.width="60%", fig.cap="Standard Model Selection: RSS, Adjusted R2, Mallow's Cp, and BIC"}
+colors <- R2CPBIC(Bluetarp ~ .)
+```
+
+```{r adjR2 Cp BIC Plots 3 Var Variables Call, figures-side, fig.show="hold", out.width="23%", fig.cap = "Standard Model Variable Selection: RSS, Adjusted R2, Mallow's Cp, and BIC"}
+R2CPBIC.var(colors)
+```
+
+```{r Model Selection Function}
+modelselection <- function(reg, direction) {
+  set.seed(1)
+  regfit <- train(reg, data = Train, 
+                         trControl = trainControl(method = "none", 
+                                                  allowParallel = TRUE),
+                         method = "glmStepAIC", direction = direction)
+  return(regfit)
+}
+```
+
+```{r Forward Selection Call}
+regfit.fwd <- modelselection(Bluetarp ~ ., 'forward')
+```
+
+```{r Backward Selection Call}
+regfit.bwd <- modelselection(Bluetarp ~ ., 'backward')
+```
+
+```{r Stepwaise Selection Call}
+regfit.step <- modelselection(Bluetarp ~ ., 'both')
+```
+
+```{r Model Section adj R2 Cp and BIC with Interaction}
+regfit2 <- regsubsets(Bluetarp ~ . + Green:Blue, data = Train)
+```
+
+```{r adjR2 Cp BIC Plots 4 Var Call, out.width="60%", fig.cap="Interaction Model Selection: RSS, Adjusted R2, Mallow's Cp, and BIC"}
+interaction <- R2CPBIC(Bluetarp ~ . + Green:Blue)
+```
+
+```{r adjR2 Cp BIC Plots 4 Var Variables Call, figures-side, fig.show="hold", out.width="23%", fig.cap = "Interaction Model Variable Selection: RSS, Adjusted R2, Mallow's Cp, and BIC"}
+R2CPBIC.var(colors)
+```
+
+```{r Interaction Forward Call}
+regfit.i.fwd <- modelselection(Bluetarp ~ . + Green:Blue, 'forward')
+```
+
+```{r Interaction Backward Call}
+regfit.i.bwd <- modelselection(Bluetarp ~ . + Green:Blue, 'backward')
+```
+
+```{r Interaction Stepwise Call}
+regfit.i.step <- modelselection(Bluetarp ~ . + Green:Blue, 'both')
+```
+Results from the three-variable model selection procedures (referred to as the "standard model") revealed all three color predictors should be included in the final model. When the same tests were run adding an interaction effect between $Green$ and $Blue$, all model selection procedures recommended a four variable model including the interaction effect.\
+\
+Models were created using both three and four variables to compare model predictive performance between models and regression creation techniques and determine the best model to identify blue tarps in the event of another disaster throughout the course of this study.
+
+# Model Fitting, Tuning Parameter Selection, and Evaluation
+
+## Preparations
+
+Due to the size of the data set, K-Fold Cross Validation was used to cross-validate the data. The function below was prepared using $k = 10$ folds to maximize the amount of training conducted on the data set. Functions were also prepared to determine the threshold and generate a confusion matrix, ROC Curve and calculate the AUC for both the training and holdout data sets.
+
+Folds were set to standardize the set of data and folds across all models for the probability thresholds function `threshold`.
+```{r General Model Training Function}
+# general model training function
+set.seed(1) # setting seed for consistency across all splits and models
+
+split <- createDataPartition(Train$Bluetarp, times = 10) 
+
+trmethod <- trainControl(method = 'cv',
+                         index = split, 
+                         savePredictions = TRUE,
+                         classProbs = TRUE, 
+                         allowParallel = TRUE)
+
+model <- function(reg, method, tuneGrid, ...) {
+  model <- train(reg, data = Train,
+                 method = method,
+                 tuneGrid = tuneGrid,
+                 trControl = trmethod)
+  return(model)
+}
+```
+
+```{r Threshold Function}
+# threshold function
+folds <- createFolds(Train$Bluetarp, k = 10, list = TRUE, returnTrain = TRUE)
+
+control <- trainControl(method = "cv",
+                        number = 10,
+                        index = folds,
+                        savePredictions = TRUE,
+                        classProbs = TRUE, 
+                        allowParallel = TRUE, 
+                        returnResamp = 'all')
+
+thres <- seq(0.05,0.90, by = 0.05)
+
+threshold <- function(model) {
+  set.seed(1)
+  stats <- thresholder(model,
+                       threshold = thres,
+                       statistics = 'all')
+  # creating FNR and FPR values to return to threshold variables
+  stats$FNR <- 1 - stats$Sensitivity
+  stats$FPR <- 1 - stats$Specificity
+
+  return(stats)
+}
+```
+
+```{r Confusion Matrix, ROC Curve and AUC Function}
+# ROC curve and AUC function
+ROC <- function(model, title, threshold) {
+  probsTest <- predict(model, Train, type = "prob")
+  preds <- factor(ifelse(probsTest[, "Yes"] > max(threshold$Accuracy), 
+                            "Yes", "No") )
+  # preds <- relevel(preds, "Yes")
+  
+  # confusion matrix
+  print(confusionMatrix(preds, Train$Bluetarp))
+  
+  # ROC
+  rates <- prediction(probsTest$Yes, Train$Bluetarp, 
+                      label.ordering = c('No', 'Yes'))
+  model.roc <- performance(rates, measure = 'tpr', x.measure = 'fpr')
+  plot(model.roc, colorize = T, 
+       print.cutoffs.at = c(0, min(threshold$Dist), 1.0))
+  lines(x = c(0,1), y = c(0,1), col = 'grey')
+  title(main = title)
+  
+  auc <- performance(rates, measure = "auc")
+  auc.val <- auc@y.values[[1]]
+  return(auc.val)
+}
+```
+
+```{r Holdout Model Confustion Matrix Function}
+cm <- function(model, threshold) {
+  probsTest <- predict(model, Holdout, type = "prob")
+  preds <- factor(ifelse(probsTest[, "Yes"] > max(threshold$Accuracy), 
+                            "Yes", "No") )
+  
+  matrix <- confusionMatrix(preds, Holdout$Bluetarp)
+  
+  # creating FNR and FPR values to return to threshold variables
+  matrix$FNR <- 1 - matrix$byClass['Sensitivity']
+  matrix$FPR <- 1 - matrix$byClass['Specificity']
+  return(matrix)
+}
+```
+
+```{r Holdout Model Performance Function}
+holdoutperf <- function(model, title, threshold) {
+  probsTest <- predict(model, Holdout, type = "prob")
+  
+  # ROC
+  rates <- prediction(probsTest$Yes, Holdout$Bluetarp, 
+                      label.ordering = c('No', 'Yes'))
+  model.roc <- performance(rates, measure = 'tpr', x.measure = 'fpr')
+  plot(model.roc, colorize = T, 
+       print.cutoffs.at = c(0, max(threshold$Accuracy), 1.0))
+  lines(x = c(0,1), y = c(0,1), col = 'grey')
+  title(main = title)
+  
+  # AUC
+  auc <- performance(rates, measure = "auc")
+  auc.val <- auc@y.values[[1]]
+  return(auc.val)
+}
+```
+
+## Logistic Regression
+
+### Model Training
+\
+Logistic regression was the first model approach tested. Models were generated by calling the `model` function and passing `glm` and additional attribute `family = binomial` into the function. The standard three-variable model consisting of only the three color features was generated as well as an interaction model with four variables that included the interaction effect between $Green$ and $Blue$.
+
+```{r LR Standard Regression}
+lr.fit <- model(Bluetarp ~ ., 'glm', NULL, 
+                family = 'binomial', metric = "Accuracy")
+summary(lr.fit)
+lr.fit$results
+```
+
+```{r LR Interation Regression}
+lr.fit.i <- model(Bluetarp ~ . + Green:Blue, 'glm', NULL, 
+                  family = 'binomial')
+summary(lr.fit.i)
+```
+
+Both models resulted in the warning `Warning: glm.fit: fitted probabilities numerically 0 or 1 occurred` indicating some of the observations were indistinguishable from 0 or 1. This warning was ignored as these models were still slated to undergo performance testing as well as additional models created to compare the performance metrics.
+
+The resulting models are:
+
+Standard three-variable model:
+
+```{=tex}
+\begin{center}
+$log(\dfrac{\hat\pi}{1-\hat\pi}) = 0.20984 - 0.26031(Red) - 0.21831(Green) + 0.47241(Blue))$
+\end{center}
+```
+Interaction four-variable model:
+
+```{=tex}
+\begin{center}
+$log(\dfrac{\hat\pi}{1-\hat\pi}) = -8.272 - 0.2208(Red) - 0.1050(Green) + 0.4469(Blue) - 0.0003820(Green)(Blue)$
+\end{center}
+```
+### Model Performance
+#### Training Set Performance
+\
+To test model performance, the ideal probability threshold needed to be determined and set. The selected threshold returned the lowest False Negative Rate (FNR). Consequently, this would increase the False Positive Rate (FPR). While increasing the FPR could potentially slow aid from responding to families in need, the lower FNR would be more likely to ensure families in need are not overlooked.
+
+```{r LR Threshold Calls, fig.show="hold"}
+lr.thres <- threshold(lr.fit)
+lr.thres.i <- threshold(lr.fit.i)
+
+# determining best threshold row for highlighting
+lr.best <- lr.thres %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR)) %>%
+  slice(which.min(FPR))
+lr.bestrow <- which(lr.thres$Accuracy == lr.best$Accuracy)
+
+lr.best.i <- lr.thres.i %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR)) %>%
+  slice(which.min(FPR))
+lr.bestrow.i <- which(lr.thres.i$Accuracy == lr.best.i$Accuracy)
+
+# table of threshold values
+lr.thres %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "Logistic Regression Standard Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = lr.bestrow, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+
+lr.thres.i %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "Interaction Model Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = lr.bestrow.i, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+```{r Standard Model LR ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="Logistic Regression Model ROCs - Training Set"}
+# ROC
+lr.ROC <- ROC(lr.fit, "Logistic Regression Three-Variable Training Model ROC",
+              lr.thres)
+lr.ROC.i <- ROC(lr.fit.i, "Logistic Regression Interaction Training Model ROC",
+                lr.thres.i)
+
+# AUC
+lr.ROC
+lr.ROC.i
+```
+The determined best probability threshold for the standard three-variable logistic regression model was 0.75, which returned an accuracy of 99.576%, FNR of 0.172%, and FPR of 8.032%. The best threshold for the interaction logistic regression model was 0.75, returning an accuracy of 99.600%, FNR of 0.267%, and FPR of 4.441%.
+
+ROC and the associated AUC were computed for both logistic regression models. The AUC for the three-variable standard model was calculated to 0.99576 where the AUC for the interaction model was 0.99953.
+
+The results from the training set performance indicated strong performance with both the standard and interaction models when using logistic regression. The training set appeared to perform about the same with accuracy and better in terms of FNR and FPR for the interaction model. This could indicate the interaction effect is recommended in the algorithms moving forward. 
+
+#### Holdout Set Performance
+\
+Using the best thresholds determined while training the models as found in Tables 4 and 5, model performance was tested and analyzed by generating confusion matrices, ROCs and AUCs. 
+
+With a 0.75 threshold, the standard model returned a accuracy of 99.866% with a FNR of 0.072%% and FPR of 6.647%. The ROC generated appeared strong with an AUC of 0.99939. This model performed surprisingly well with the holdout data, performing better than the training data in terms of accuracy, FNR, FPR, and AUC. This indicated that the model was not over fit and has strong predictive performance. 
+
+Although both models performed approximately the same and the interaction model has the higher AUC, the standard model would be preferred for predictive performance as it is a simpler model and would be the selected algorithm for this data set when choosing between the two. This placed the logistic regression standard model as the bar for comparison to other models in this study when focusing on predictive performance. 
+```{r LR Holdout Standard Model Confusion Matrix}
+lr.cm <- cm(lr.fit, lr.thres)
+lr.cm
+```
+
+```{r LR Holdout Interaction Model Confusion Matrix}
+lr.cm.i <- cm(lr.fit, lr.thres)
+lr.cm.i
+```
+
+```{r LR Holdout ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="Logistic Regression Model ROCs - Holdout Set"}
+# ROC
+lr.holdout <- holdoutperf(lr.fit, 
+                          "Logistic Regression Standard Model Holdout ROC", 
+                          lr.thres)
+lr.holdout.i <- holdoutperf(lr.fit.i, 
+                            "Logistic Regression Interaction Model Holdout ROC",
+                            lr.thres.i)
+
+# AUC
+lr.holdout
+lr.holdout.i
+```
+
+## LDA (Linear Discriminant Analysis)
+
+### Model Training
+
+Linear discriminant analysis (LDA) models were generated next. The `model` function was called and the method specified as `"lda"` for both the standard and interaction models.
+
+```{r LDA Standard Regression}
+lda.fit <- model(Bluetarp ~ ., 'lda', NULL)
+lda.fit$finalModel
+```
+
+```{r LDA Interation Regression}
+lda.fit.i <- model(Bluetarp ~ . + Green:Blue, 'lda', NULL)
+lda.fit.i$finalModel
+```
+
+### Model Performance
+#### Training Set Performance
+\
+Following the creation of the LDA models, model performance was tested.
+
+The probability threshold for the three-variable standard model was determined to be best at 0.15, returning and accuracy of 98.485%, FNR of 0.767%, and FPR of 24.174%. Although the model has a generally high accuracy and low FNR, it performed worse than the training set performed for the logistic regression model. The FPR rate was also high. An FPR of 24.174% translates to 24.174% of locations visited by aid workers were not occupied by displaced Haitians. In times of disaster, that could be a significant amount of time that is not optimized servicing individuals in need. This likely indicates this is not an optimal model type for this data set, but further analysis will be conducted to determine if the predictive performance is better with this algorithm. 
+
+The interaction model performed best with a threshold of 0.70, with an accuracy of 99.441%, FNR of 0.134%, and FPR of 13.442%. This model performed better than the standard model in all areas, though still had a relatively high FPR and performed worse than the training logistic regression models. 
+
+ROC and AUCs were generated for both models. The standard three-variable model the AUC was computed to be 0.98888 and 0.99525 for the interaction model when testing performance with the training data.
+
+Neither of these models performed well and would not be selected over the logistic regression standard model for training set performance. 
+```{r LDA Threshold Calls, fig.show="hold"}
+lda.thres <- threshold(lda.fit)
+lda.thres.i <- threshold(lda.fit.i)
+
+# determining best threshold row for highlighting
+lda.best <- lda.thres %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+lda.bestrow <- which(lda.thres$Accuracy == lda.best$Accuracy)
+
+lda.best.i <- lda.thres.i %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+lda.bestrow.i <- which(lda.thres.i$Accuracy == lda.best.i$Accuracy)
+
+# table of threshold values
+lda.thres %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "LDA Standard Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = lda.bestrow, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+
+lda.thres.i %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "LDA Interaction Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = lda.bestrow.i, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+```{r Stnadard Model LDA ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="LDA Model ROCs - Training Set"}
+# ROC
+lda.ROC <- ROC(lda.fit, "LDA Standard Model Training ROC", lda.thres)
+lda.ROC.i <- ROC(lda.fit.i, "LDA Interaction Model Training ROC", lda.thres.i)
+
+# AUC
+lda.ROC
+lda.ROC.i
+```
+
+#### Holdout Set Performance
+\
+The holdout set was used to test the predictive performance of the standard and interaction LDA algorithms using the best performing thresholds from the training set. 
+
+The standard model's performance was evaluated first. The accuracy of the LDA standard model's holdout set was 98.515% with an FNR of 1.146% and FPR of 37.213%. The calculated AUC was 0.99242. This model performed worse than with the training set in terms of accuracy and more significantly in FPR, but better in terms of FNR. It also performed worse than both of the logistic regression models. The poor performance of this model provided further evidence that and LDA model is not the best method for this data set. 
+
+The accuracy of the LDA interaction model's predictive performance was 98.515%. The FNR was 1.146%, FPR was 37.213%, and AUC was 0.99812. This model performed exactly the same as the LDA standard model in areas of accuracy, FNR, and FPR, again indicating this is not an optimal method for this data. If having to choose between the standard and interactive LDA models, the interaction model would be selected as the AUC is slightly higher, although overall this model would not be recommended for predicting whether or not a pixel contains a blue tarp in rescue efforts. 
+```{r LDA Holdout Standard Model Confusion Matrix}
+lda.cm <- cm(lda.fit, lda.thres)
+lda.cm
+```
+
+```{r LDA Holdout Interaction Model Confusion Matrix}
+lda.cm.i <- cm(lda.fit, lda.thres)
+lda.cm.i
+```
+
+```{r LDA Holdout ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="LDA Model ROCs - Holdout Set"}
+# ROC
+lda.holdout <- holdoutperf(lda.fit, "LDA Standard Model Holdout ROC", lda.thres)
+lda.holdout.i <- holdoutperf(lda.fit.i, "LDA Interaction Model Holdout ROC", 
+                             lda.thres.i)
+
+# AUC
+lda.holdout
+lda.holdout.i
+```
+
+## QDA (Quadratic Discriminant Analysis)
+
+### Model Training
+
+Quadratic discriminant analysis (QDA) models were created, calling the `model` function and passing `"qda"` as the method.
+
+```{r QDA Standard Regression}
+qda.fit <- model(Bluetarp ~ ., 'qda', NULL)
+qda.fit$finalModel
+```
+
+```{r QDA Interation Regression}
+qda.fit.i <- model(Bluetarp ~ . + Green:Blue, 'qda', NULL)
+qda.fit.i$finalModel
+```
+
+### Model Performance
+#### Training Set Performance
+\
+Model training performance was conducted on both the standard and interaction models generated with QDA. The best probability threshold was calculated to 0.75 for the standard model and 0.05 for the interaction model. The standard model's accuracy at threshold 0.75 was 99.478% with an FNR of 0.085%, and FPR of 13.759%. The AUC was determined to be 0.99822.
+
+The interaction model returned an accuracy of 99.469% with a 0.061% FNR, and 14.738% FPR when at a 0.05 probability threshold. The AUC was 0.99709.
+
+Both of these models performed fairly well with the training data than the LDA models. The standard model performed better than the interaction model, but neither performed as well as the logistic regression models with training data and both returned high FPR suggesting these algorithms may also not be the best suited for the training data.
+```{r QDA Threshold Calls, fig.show="hold"}
+qda.thres <- threshold(qda.fit)
+qda.thres.i <- threshold(qda.fit.i)
+
+# determining best threshold row for highlighting
+qda.best <- qda.thres %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+qda.bestrow <- which(qda.thres$Accuracy == qda.best$Accuracy)
+
+qda.best.i <- qda.thres.i %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+qda.bestrow.i <- which(qda.thres.i$Accuracy == qda.best.i$Accuracy)
+
+# table of threshold values
+qda.thres %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "QDA Standard Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = qda.bestrow, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+
+qda.thres.i %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "QDA Interaction Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = qda.bestrow.i, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+```{r Standard QDA ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="QDA Model ROCs - Training Set"}
+#ROC
+qda.ROC <- ROC(qda.fit, "QDA Standard Model Training ROC", qda.thres)
+qda.ROC.i <-ROC(qda.fit.i, "QDA Interaction Model Training ROC", qda.thres.i)
+
+#AUC
+qda.ROC
+qda.ROC.i
+```
+
+#### Holdout Set Performance
+\
+The holdout set data was tested using the trained QDA models. 
+
+The QDA standard model holdout performance was conducted with the best determined threshold of 0.75, as determined by the training set, and returned an accuracy of 99.526% with an FNR of 0.019% and FPR of 48.262%. The AUC was 0.99224. The holdout data performed better than the training data in terms of accuracy. The FPR rate, however, was much higher than the training performance. Due to the high FPR, this algorithm would not be recommended to predict the location of blue tarps from aerial images. 
+
+The QDA interaction model produced similar results with an accuracy of 99.526% with an FNR of 0.019% and FPR of 48.262% at a threshold of 0.05. The AUC was 0.96773. The high FPR suggested this algorithm should not be used for predicting whether or not a pixel contains a blue tarp. 
+```{r QDA Holdout Standard Model Confusion Matrix}
+qda.cm <- cm(qda.fit, qda.thres)
+qda.cm
+```
+
+```{r QDA Holdout Interaction Model Confusion Matrix}
+qda.cm.i <- cm(qda.fit, qda.thres)
+qda.cm.i
+```
+
+```{r QDA Holdout ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="QDA Model ROCs - Holdout Set"}
+# ROC
+qda.holdout <- holdoutperf(qda.fit, "QDA Standard Model Holdout ROC", 
+                           qda.thres)
+qda.holdout.i <- holdoutperf(qda.fit.i, "QDA Interaction Model Holdout ROC", 
+                             qda.thres.i)
+# AUC
+qda.holdout
+qda.holdout.i
+```
+
+## KNN (K-Nearest Neighbors)
+
+To prepare for using the K-Nearest Neighbors (KNN) method to predict whether or not a pixel contained a blue tarp, the $k$-value needed to be determined. A range of $k$-values, 1 to 25, were used to identify the best value, chosen by the $k$-value returning the lowest overall error rate and highest accuracy. 
+
+```{r KNN Prep}
+k <- 1:25
+```
+
+### Model Training
+\
+A standard three-variable model and interaction model were generated using KNN. To generate the model, `tuneGrid` needed to be set as a range of values to test and determine the best value for $k$. `expand.grid(k = 1:25)` was passed into the `model` function to test $k$ as the values from 1 to 25. `metric = "Accuracy"` was also passed to ensure the best model recommended had the highest accuracy. 
+
+The best $k$-value for the standard KNN regression had $k = 5$ as the optimal $k$-value. $k = 1$ was determined to be the best $k$-value for the interaction model. 
+
+```{r KNN Standard Regression, cache = TRUE, dependson="KNN Prep"}
+knn.fit <- model(Bluetarp ~ ., 'knn', expand.grid(k = k), 
+                 metric = "Accuracy")
+knn.fit$finalModel
+```
+
+```{r KNN Standard Model K Selection Visualization, fig.cap="KNN Standard Model K-Value vs. Accuracy Rate"}
+ggplot(knn.fit, aes(x = k, y = knn.fit$results['Accuracy'])) +
+  geom_point() +
+  geom_line() +
+  labs(x = "k", y = "Accuracy Rate")
+```
+
+
+```{r KNN Interation Regression, cache=TRUE, dependson="KNN Prep"}
+knn.fit.i <- model(Bluetarp ~ . + Green:Blue, 'knn', 
+                   expand.grid(k = k), metric = "Accuracy")
+knn.fit.i$finalModel
+```
+
+```{r KNN Interaction Model K Selection Visualization, fig.cap="KNN Standard Model K-Value vs. Accuracy Rate"}
+ggplot(knn.fit.i, aes(x = k, y = knn.fit.i$results['Accuracy'])) +
+  geom_point() +
+  geom_line() +
+  labs(x = "k", y = "Accuracy Rate")
+```
+
+### Model Performance
+#### Training Set Performance
+\
+After model training, probability thresholds were calculated for the standard and interaction models. 
+
+The best probability threshold for the KNN standard model was determined to be best at 0.40 with $k=5$. This returned an accuracy of 99.701%, FNR of 0.164%, and FPR of 4.402. The AUC for this model was 0.99986. This model outperformed the logistic regression standard model and all other models previously investigated with the training set. 
+
+The KNN interaction model returned four thresholds with identical results. The selected threshold for the final model was 0.65 as the accuracy remained the highest when increasing the threshold, where lowering it to 0.5 had a lower accuracy if moving below 0.5. The KNN interaction model returned a training accuracy of 99.232%, FNR of 0.233%, and FPR of 16.954% with threshold 0.65 and $k=1$. The AUC was returned as 0.99997 This model did not perform as strongly as the KNN standard model, despite the higher AUC, and due to its lower performance in accuracy, FNR, and FPR would not be selected as the best algorithm for the training set. 
+```{r KNN Threshold Calls, fig.show="hold"}
+knn.thres <- threshold(knn.fit)
+knn.thres.i <- threshold(knn.fit.i)
+
+# determining best threshold row for highlighting
+knn.best <- knn.thres %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+knn.bestrow <- which(knn.thres$Accuracy == knn.best$Accuracy)
+
+knn.best.i <- knn.thres.i %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR)) %>%
+  slice_max(prob_threshold)
+knn.bestrow.i <- which(knn.thres.i$Accuracy == knn.best.i$Accuracy)
+
+# table of threshold values
+knn.thres %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "KNN Standard Model Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = knn.bestrow, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+
+knn.thres.i %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "KNN Interaction Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = knn.bestrow.i, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+```{r KNN Training ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="KNN Model ROCs - Training Set"}
+# ROC
+knn.ROC <- ROC(knn.fit, "KNN Standard Model Training ROC", knn.thres)
+knn.ROC.i <- ROC(knn.fit.i, "KNN Interaction Model Training ROC", knn.thres.i)
+
+#AUC
+knn.ROC
+knn.ROC.i
+```
+
+#### Holdout Set Performance
+\
+After training the KNN models, performance was tested for both the standard and interaction models using the holdout set with the same thresholds and $k$-values as their respective training performance testing. 
+
+The KNN standard model's holdout performance resulted in an accuracy of 99.454%, FNR of 0.269%, and FPR of 29.658%. The AUC was 0.95986. This algorithm did not perform as well with the holdout data as it did with the training data. This suggested over training may be present. The most noticeable performance difference between data sets was with FPR, which increased from 4.402% in the training set to 29.658% with the holdout set. Although the KNN standard model's performance with the training set was the best thus far, this dramatic change when testing with the holdout set was concerning. 
+
+The KNN interaction model, on the other hand, returned better accuracy than its training performance, but a much lower AUC and worse FNR and FPR. In fact, the accuracy, FNR, and FPR were the same as the performance from the KNN standard model with the holdout set. The holdout performance returned an accuracy of 99.454%, FNR of 0.269%, and FPR of 29.658%. The AUC, however, was much lower than the KNN standard model's test performance, resulting in an AUC of 0.87348. This was evidence that the KNN interaction algorithm may not be appropriate for predicting blue tarps when using the holdout set. 
+```{r KNN Holdout Standard Model Confusion Matrix}
+knn.cm <- cm(knn.fit, knn.thres)
+knn.cm
+```
+
+```{r KNN Holdout Interaction Model Confusion Matrix}
+knn.cm.i <- cm(knn.fit, knn.thres)
+knn.cm.i
+```
+
+```{r KNN Holdout ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="KNN Model ROCs - Holdout Set"}
+# ROC
+knn.holdout <- holdoutperf(knn.fit, "KNN Standard Model Holdout ROC", 
+                           knn.thres)
+knn.holdout.i <- holdoutperf(knn.fit.i, "KNN Interaction Model Holdout ROC", 
+                             knn.thres.i)
+
+# AUC
+knn.holdout
+knn.holdout.i
+```
+
+## Penalized Logistic Regression (Elastic Net Penalty)
+
+With there being only few variables included in the model, the selected type of penalized logistic regression model was tuned with ridge regression.
+
+Before creating the ridge regression models, an additional tuning parameter, $\lambda$ needed to be prepared and passed in the function `model`.
+
+```{r Ridge Prep}
+lambdas <- 10^seq(-2, -3, by = -0.05) 
+tuneGrid <- expand.grid(alpha = 0, # selected 0 for ridge regression 
+                        lambda = lambdas)
+```
+
+### Model Training
+
+The standard, three-variable model was generated first. The best accuracy was returned with the tuning parameter set to $\lambda = 0.00398$. The interaction model was also generated. The final tuning parameter value for the interaction model $\lambda = 0.00398$.
+
+```{r Ridge Standard Regression, cache = TRUE, dependson="Ridge Prep"}
+ridge.fit <- model(Bluetarp ~ ., 'glmnet', tuneGrid)
+ridge.fit
+```
+
+```{r Ridge Interaction Regression, cache = TRUE, dependson="Ridge Prep"}
+ridge.fit.i <- model(Bluetarp ~ . + Green:Blue, 'glmnet', tuneGrid)
+ridge.fit.i
+```
+After conducting and analyzing the initial training results from using ridge regression, it became clear that ridge regression was not an optimal method for this data set. The tuning parameter, $\lambda$, consistently maxed out at different accuracies. Multiple ranges and steps were tested in the $\lambda$ sequence to determine the best tuning parameter. Ranges such as -1 to -2 resulted in the best $\lambda$ at 0.1 with an accuracy of 96.803% while the same accuracy was presented when the sequence range was set to 1 to 0 favoring $\lambda = 10$. The best result found, still maxing out to a straight line, was between the sequence range of -2 to -3, returning an optimal $\lambda$ value of 0.00407 with an accuracy of 97.817%. With the value being so close to zero, it also confirmed that a $\lambda$ value of 0 is likely the most optimal, negating the need to perform a ridge regression. Additionally, an accuracy of 97.817% was lower than the other models, furthering evidence this was not the best model for this data set. 
+
+Despite these findings, the model was generated using $\lambda = 0.00398$ to conduct thorough method analysis. 
+
+### Model Performance
+#### Training Set Performance
+\
+Model performance was tested by first calculating the appropriate probability threshold. The standard model performed best with a probability threshold of 0.75, resulting in an accuracy of 98.623%, FNR of 0.051%, and FPR of 41.503%. The interaction model's best performing probability threshold was 0.70, with an accuracy of 98.525%, 0.000% FNR, and 46.133% FPR.
+
+The ROC and AUC were computed for both ridge regression models. The three-variable model's AUC was 0.98019 while the interaction model's AUC was 0.97814.
+
+Neither the standard model nor the interaction model using ridge regression performed well with the training performance, as expected, and would not be recommended for the training data.
+```{r Ridge Threshold Calls, fig.show="hold"}
+ridge.thres <- threshold(ridge.fit)
+ridge.thres.i <- threshold(ridge.fit.i)
+
+# determining best threshold row for highlighting
+ridge.best <- ridge.thres %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+ridge.bestrow <- which(ridge.thres$Accuracy == ridge.best$Accuracy)
+
+ridge.best.i <- ridge.thres.i %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+ridge.bestrow.i <- which(ridge.thres.i$Accuracy == ridge.best.i$Accuracy)
+
+# table of threshold values
+ridge.thres %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "Ridge Regression Standard Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = ridge.bestrow, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+
+ridge.thres.i %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "Ridge Regression Interaction Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = ridge.bestrow.i, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+```{r Standard Ridge ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="Ridge Regression Model ROCs - Training Set"}
+# ROC 
+ridge.ROC <- ROC(ridge.fit, 
+                 "Ridge Regresion Standard Model Training ROC", 
+                 ridge.thres)
+ridge.ROC.i <- ROC(ridge.fit.i, 
+                   "Ridge Regression Interaction Model Training ROC", 
+                   ridge.thres.i)
+
+# AUC
+ridge.ROC
+ridge.ROC.i
+```
+
+#### Holdout Set Performance
+\
+Holdout performance was still executed to collect and complete the results for comparison of all model performances.
+
+The ridge regression standard model's test accuracy was calculated to 99.058% with an FNR of 0.000% and FPR of 100%. The AUC was 0.98815. The accuracy and AUC are very misleading as the FPR was 100%, confirming this model does not perform well and is not a good fit for predicting blue tarps in disaster relief situations. 
+
+The interaction ridge regression model returned similar results as the standard model with an accuracy of 99.058%, FNR of 0.000% and FPR of 100%. The AUC was 0.98682.
+
+As previously discussed, these models are not performing to the same standards at the other models and would not be considered for predicting blue tarps in the event of emergency based on holdout performance. 
+```{r Ridge Regression Holdout Standard Model Confusion Matrix}
+ridge.cm <- cm(ridge.fit, ridge.thres)
+ridge.cm
+```
+
+```{r Ridge Holdout Interaction Model Confusion Matrix}
+ridge.cm.i <- cm(ridge.fit, ridge.thres)
+ridge.cm.i
+```
+
+```{r Ridge Holdout ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="Ridge Regression Model ROCs - Holdout Set"}
+# ROC
+ridge.holdout <- holdoutperf(ridge.fit, 
+            "Ridge Regresion Standard Model Holdout ROC", ridge.thres)
+ridge.holdout.i <- holdoutperf(ridge.fit.i, 
+            "Ridge Regresion Interaction Model Training ROC", ridge.thres.i)
+
+# AUC
+ridge.holdout
+ridge.holdout.i
+```
+
+## Random Forest
+Random forest models have more requirements than the previously demonstrated models. To train the random forest models the appropriate `mtry` and `ntree` values needed to be determined. To determine these values a `for` loop was utilized and a table generated to compare the results. Visualizations were also generated to identify what parameters returned the best standard and interaction random forest models. 
+
+Comparison of the Out-of-Bag Mean Square Error (OOB MSE) was observed visually and a table compared all of the results, returning the optimal parameters. For the standard model, the parameters that returned the lowest OOB MSE was `ntree = 41` and `mtry = 2`, which had an OOB MSE of 0.275%. The interaction model returned a minimum OOB MSE of 00.275% when the parameters were set to `ntree = 472` and `mtry = 1`. 
+```{r Random Forest Standard Model Parameter Selection, cache = TRUE}
+set.seed(1)
+rf.results = tibble()
+for (mtry in 1:(ncol(Train) - 1)) {
+  rf.try <- model(Bluetarp ~., 'rf', expand.grid(mtry = mtry), ntree = 500)
+  rf.results <- bind_rows(rf.results, 
+                          tibble(oob_mse = rf.try$finalModel$err.rate[,1],
+                                 ntree = 1:500,
+                                 mtry = mtry))
+}
+```
+
+```{r Random Forest Standard Model Plots, figures-side, fig.show="hold", out.width="45%", fig.cap="Random Forest Standard Model Parameter Selection", cache = TRUE, dependson = "Random Forest Standard Model Parameter Selection"}
+rf.minima <- rf.results %>%
+  group_by(mtry) %>%
+  filter(oob_mse == min(oob_mse))
+ggplot(rf.results, aes(x = ntree, y = oob_mse, color = mtry, group = mtry)) +
+  geom_line() +
+  geom_point(data = rf.minima, color = 'red')
+```
+
+```{r Random Forest Standard Model Lowest OOB MSE Table, cache = TRUE, dependson = "Random Forest Standard Model Parameter Selection"}
+rf.params <- rf.results %>% 
+  dplyr::slice_min(oob_mse)
+
+rf.params %>%
+  knitr::kable(digits = 5, caption = "Random Forest Standard Model 
+               Lowest Threshold") %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+```{r Random Forest Interaction Model Parameter Selection, cache = TRUE}
+set.seed(1)
+rf.results.i = tibble()
+for (mtry in 1:(ncol(Train) - 1)) {
+  rf.try.i <- model(Bluetarp ~ . + Green:Blue, 'rf', expand.grid(mtry = mtry), 
+                    ntree = 500)
+  rf.results.i <- bind_rows(rf.results.i, 
+                          tibble(oob_mse.i = rf.try.i$finalModel$err.rate[,1],
+                                 ntree = 1:500,
+                                 mtry = mtry))
+}
+```
+
+```{r Random Forest Interaction Model Plots, figures-side, fig.show="hold", out.width="45%", fig.cap="Random Forest Interaction Model Parameter Selection", cache = TRUE, dependson = "Random Forest Interaction Model Parameter Selection"}
+rf.minima.i <- rf.results.i %>%
+  group_by(mtry) %>%
+  filter(oob_mse.i == min(oob_mse.i))
+ggplot(rf.results.i, aes(x = ntree, y = oob_mse.i, color = mtry, group = mtry)) +
+  geom_line() +
+  geom_point(data = rf.minima.i, color = 'red')
+```
+
+```{r Random Forest Interaction Model Lowest OOB MSE Table, cache = TRUE, dependson = "Random Forest Interaction Model Parameter Selection"}
+rf.i.params <- rf.results.i %>% 
+  dplyr::slice_min(oob_mse.i)
+
+rf.i.params %>%
+  knitr::kable(digits = 5, caption = "Random Forest Interaction Model 
+               Lowest Threshold") %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+### Model Training
+
+These best parameters were then piped into the `model` function to build the model before conducting performance tests on both the training and holdout sets. 
+```{r Random Forest Standard Model, cache = TRUE, dependson = "Random Forest Standard Model Lowest OOB MSE Table"}
+rf.fit <- model(Bluetarp ~., 'rf', expand.grid(mtry = rf.params['mtry']), 
+                ntree = rf.params['ntree'])
+rf.fit
+```
+
+```{r Random Forest Interaction Model, cache = TRUE, dependson = "Random Forest Interaction Model Lowest OOB MSE Table"}
+rf.fit.i <- model(Bluetarp ~. + Green:Blue, 'rf', 
+                  expand.grid(mtry = rf.i.params['mtry']), 
+                  ntree = rf.params.i['ntree'])
+rf.fit.i
+```
+
+
+### Model Performance
+#### Training Set Performance
+\
+Following model training, the best threshold was determined for both the random forest standard model and the random forest interaction model by passing the models into the `threshold` function. The best threshold for the standard model was determined to be 0.50 when `ntree = 41` and `mtry = 2`. The best threshold for the interaction model was calculated to 0.60 when `ntree = 472` and `mtry = 1`. 
+
+Using these thresholds, performance metrics were calculated. The random forest standard model returned an accuracy of 99.685%, FNR of 0.152%, and FPR of 5.252%. The AUC was 0.99450. Overall, this model appeared to be performing best with the training metrics, outperforming the logistic regression standard and interaction models in all areas except FPR, which was a little higher than the logistic regression interaction model's FPR, but lower than the logistic regression standard model's FPR. This model, however, did not perform as well as the KNN standard model. 
+
+The random forest interaction model, with a probability threshold of 0.60, returned an accuracy of 99.690%, FNR of 0.184%, and FPR of 4.115%. The AUC was 0.99994. This model had a slightly higher accuracy than the random forest standard model, but also a higher FNR and a lower FPR. This model would be considered comparable to the random forest standard model, but the standard model may be selected over the interaction model for the lower FNR and generally less complex model. Like it's fellow standard model, this model did not perform as well as the front-running KNN standard model. 
+```{r Random Forest Threshold Calls, fig.show="hold"}
+rf.thres <- threshold(rf.fit)
+rf.thres.i <- threshold(rf.fit.i)
+
+# determining best threshold row for highlighting
+rf.best <- rf.thres %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+rf.bestrow <- which(rf.thres$Accuracy == rf.best$Accuracy)
+
+rf.best.i <- rf.thres.i %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+rf.bestrow.i <- which(rf.thres.i$Accuracy == rf.best.i$Accuracy)
+
+# table of threshold values
+rf.thres %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "Random Forest Regression Standard Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = rf.bestrow, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+
+rf.thres.i %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "Random Forest Interaction Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = rf.bestrow.i, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+```{r Random Forest ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="Random Forest Model ROCs - Training Set"}
+# ROC 
+rf.ROC <- ROC(rf.fit, "Random Forest Standard Model Training ROC", rf.thres)
+rf.ROC.i <- ROC(rf.fit.i, "Random Forest Interaction Model Training ROC", 
+                rf.thres.i)
+
+# AUC
+rf.ROC
+rf.ROC.i
+```
+
+#### Holdout Set Performance
+\
+The random forest models were then tested for performance on the holdout set. 
+
+Both the standard and interaction models returned an accuracy of 99.295%, FNR of 0.005%, and FPR of 74.337%. The AUC of the standard model was 0.98248, and the AUC for the interaction model was 0.98615. Neither of these models performed as well with the holdout set as they did with the training set. This indicated the training set may be over trained or could be a result of the training set not being a good representation of all the data points as a whole. 
+```{r Random Forest Holdout Standard Model Confusion Matrix}
+rf.cm <- cm(rf.fit, rf.thres)
+rf.cm
+```
+
+```{r Random Forest Holdout Interaction Model Confusion Matrix}
+rf.cm.i <- cm(rf.fit, rf.thres)
+rf.cm.i
+```
+
+```{r Random Forest Holdout ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="Random Forest Model ROCs - Holdout Set"}
+rf.holdout <- holdoutperf(rf.fit, "Random Forest Standard Model Holdout ROC", 
+                          rf.thres)
+rf.holdout.i <- holdoutperf(rf.fit.i, 
+                            "Random Forest Standard Model Holdout ROC",
+                            rf.thres.i)
+
+# AUC
+rf.holdout
+rf.holdout.i
+```
+
+## SVM (Support Vector Machines)
+The last method used to generate models was support vector machines (SVM). A radial kernel was selected because the shape of the divide between the blue tarp and non-blue tarp pixels during EDA did not appear to have a perfectly linear relationship nor a very abstract divide. Further evidence for this when the LDA and QDA models were run. The LDA model did not perform well with this data set and though the QDA model has not been the strongest performing of all generated models, it was preferred over the LDA model. 
+
+SVM models need to be pre-processed and scaled prior to model training. The features in this data set were already on the same scale of 0 to 255 as it is all the RGB makeup of a pixel and therefore no scaling was completed when generating these models. 
+
+Radial SVM models require a `cost` and `sigma` value for training. These parameters were set as an exponential range for model tuning.
+
+```{r SVM Prep}
+cost <- 10^seq(0, 6, by = 0.25)
+sigma <- 10^seq(-1, 1, by = 0.5)
+```
+
+### Model Training
+The SVM models were generated with the range of `cost` and `sigma` values. The best models were generated and the parameters were determined. For the SVM standard model, the cost, C, was best at 117.828 and a $\sigma$ value of 10. The SVM interaction model returned the best model with parameters $C = 100$ and $\sigma = 3.162278$. 
+```{r SVM Standard Model, cache = TRUE, dependson="SVM Prep"}
+svm.fit <- model(Bluetarp ~ ., 'svmRadial', data.frame(C = cost, sigma = sigma))
+svm.fit$finalModel
+svm.fit
+```
+
+```{r SVM Standard Model Parameters and Error, fig.cap="SVM Standard Model Parameter Selection"}
+svm.fit.params <- data.frame(
+  cost = svm.fit$results$C,
+  sigma = svm.fit$results$sigma,
+  error = 1 - svm.fit$results$Accuracy
+)
+ggplot(svm.fit.params, aes(x = cost, y = error, 
+                           group = sigma, color = log10(sigma))) +
+  geom_point() +
+  geom_line() +
+  scale_x_log10() +
+  scale_colour_distiller(palette = "Spectral")
+```
+
+
+```{r SVM Interaction Model, cache = TRUE, dependson="SVM Prep"}
+svm.fit.i <- model(Bluetarp ~ . + Green:Blue, 'svmRadial', 
+                   data.frame(C = cost, sigma = sigma))
+svm.fit.i$finalModel
+svm.fit.i
+```
+
+```{r SVM Standard Interaction Parameters and Error, fig.cap="SVM Interaction Model Parameter Selection"}
+svm.fit.i.params <- data.frame(
+  cost.i = svm.fit.i$results$C,
+  sigma.i = svm.fit.i$results$sigma,
+  error.i = 1 - svm.fit.i$results$Accuracy
+)
+ggplot(svm.fit.i.params, aes(x = cost.i, y = error.i, 
+                             group = sigma.i, color = log10(sigma.i))) +
+  geom_point() +
+  geom_line() +
+  scale_x_log10() +
+  scale_colour_distiller(palette = "Spectral")
+```
+
+### Model Performance
+#### Training Set Performance
+\
+After determining the best parameter values, the best probability threshold was determined. 
+
+The optimal threshold for the SVM standard model was 0.55, resulting in an accuracy of 99.719%, FNR of 0.140%, and FPR of 4.530%. The calculated AUC was 0.99921. This model outperformed the KNN standard model, the previous "front runner", with the training performance. 
+
+The SVM interaction model performed best at a threshold of 0.60. At this threshold, the model returned a test accuracy of 99.713%, FNR of 0.158%, and FPR of 4.194%. This model performed just under the SVM standard model and is the second best of the bunch in terms of the training performance. 
+```{r SVM Threshold Calls, fig.show="hold"}
+svm.thres <- threshold(svm.fit)
+svm.thres.i <- threshold(svm.fit.i)
+
+# determining best threshold row for highlighting
+svm.best <- svm.thres %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+svm.bestrow <- which(svm.thres$FNR == svm.best$FNR)
+
+svm.best.i <- svm.thres.i %>% 
+  dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+svm.bestrow.i <- which(svm.thres.i$FNR == svm.best.i$FNR)
+
+# table of threshold values
+svm.thres %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "SVM Regression Standard Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = svm.bestrow, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+
+svm.thres.i %>% 
+    dplyr::select("prob_threshold", "Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+    knitr::kable(digits = 5, 
+                 caption = "SVM Interaction Model 
+                 Probability Threshold Table") %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::row_spec(row = svm.bestrow.i, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+```{r SVM ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="SVM Model ROCs - Training Set"}
+# ROC 
+svm.ROC <- ROC(svm.fit, "SVM Standard Model Training ROC", svm.thres)
+svm.ROC.i <- ROC(svm.fit.i, "SVM Interaction Model Training ROC", svm.thres.i)
+
+# AUC
+svm.ROC
+svm.ROC.i
+```
+
+#### Holdout Set Performance
+\
+Finally, the holdout set was used to test both the SVM standard and interaction models. 
+
+The standard model, at the 0.55 probability threshold, returned an accuracy of 99.004%, FNR of 0.229%, and FPR of 81.607%. The AUC was 0.91245. Sadly, this model did not perform as well with the holdout set, indicating the trained model may be over trained. 
+
+The interaction model returned very similar results at its best threshold of 0.60. The accuracy was 99.004%, FNR was 0.229%, and FPR was 81.607%. The only difference from the standard model was the AUC, which was 0.93291, indicating this model may perform better than the SVM standard model when coming to predictive performance. 
+
+The extremely high FPR rate returned from the holdout performance test with both the standard and interaction models was very disappointing. This suggested that the SVM algorithms may not be the best choice in the Haiti disaster relief efforts with the holdout set. 
+```{r SVM Holdout Standard Model Confusion Matrix}
+svm.cm <- cm(svm.fit, svm.thres)
+svm.cm
+```
+
+```{r SVM Holdout Interaction Model Confusion Matrix}
+svm.cm.i <- cm(svm.fit, svm.thres)
+svm.cm.i
+```
+
+```{r SVM Holdout ROC Call, figures-side, fig.show="hold", out.width="45%", fig.cap="SVM Model ROCs - Holdout Set"}
+# ROC
+svm.holdout <- holdoutperf(svm.fit, "SVM Standard Model Holdout ROC", svm.thres)
+svm.holdout.i <- holdoutperf(svm.fit.i, "SVM Interaction Model Holdout ROC", 
+                             svm.thres.i)
+
+# AUC
+svm.holdout
+svm.holdout.i
+```
+
+## Model Performance Comparisons and Results
+
+After completing the initial model creation and computation of performance metrics were completed, the different algorithm performances were compared. A table was created to most easily digest the information and determine the best performing model to locate blue tarps.
+
+Table 20 represents the thresholds and parameters associated with the best model for that method. Table 21 displays the model performance, highlighting the model that performed best with the training data. Both Table 20 and Table 21 were validated using 10-Fold Cross-Validation. 
+
+Table 22 represents the model performance with the holdout set, highlighting the model with the best test metrics. 
+
+```{r Performance Comparisons Parameter and Thresholds Table, fig.align='center', fig.show="hold"}
+params <- data.frame(matrix(nrow = 14, ncol = 3))
+
+params.names <- c("Model", "Parameter", "prob_threshold")
+
+colnames(params) <- params.names
+
+model.names <- c("Logistic Regression Standard Model", 
+                 "Logistic Regression Interaction Model", 
+                 "LDA Standard Model",
+                 "LDA Ineration Model",
+                 "QDA Standard Model",
+                 "QDA Interaction Model",
+                 "KNN Standard Model",
+                 "KNN Interaction Model",
+                 "Ridge Regression Standard Model", 
+                 "Ridge Regression Interaction Model",
+                 "Random Forest Standard Model",
+                 "Random Forest Interaction Model",
+                 "SVM Standard Model, Radial Kernel",
+                 "SVM Interaction Model, Radial Kernel")
+
+params["Model"] <- model.names
+
+# pulling individual model threshold and parameter stats
+lr.params <- lr.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("parameter", "prob_threshold") %>%
+  mutate("Model" = "Logistic Regression Standard Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+lr.i.params <- lr.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("parameter", "prob_threshold") %>%
+  mutate("Model" = "Logistic Regression Interaction Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+lda.params <- lda.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("parameter", "prob_threshold") %>%
+  mutate("Model" = "LDA Standard Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+lda.i.params <- lda.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("parameter", "prob_threshold") %>%
+  mutate("Model" = "LDA Interaction Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+qda.params <- qda.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("parameter", "prob_threshold") %>%
+  mutate("Model" = "QDA Standard Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+qda.i.params <- qda.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("parameter", "prob_threshold") %>%
+  mutate("Model" = "QDA Interaction Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+knn.params <- knn.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  slice_max(prob_threshold) %>%
+  dplyr::select("k", "prob_threshold") %>%
+  mutate("Model" = "KNN Standard Model") %>%
+  rename("parameter" = "k") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+knn.params$parameter <- as.character(knn.params$parameter)
+knn.params['parameter'] <- as.character(knn.params['parameter'])
+knn.params['parameter'] <-  str_c('k = ', knn.params['parameter'])
+
+knn.i.params <- knn.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  slice_max(prob_threshold) %>%
+  dplyr::select("k", "prob_threshold") %>%
+  mutate("Model" = "KNN Interaction Model") %>%
+  rename("parameter" = "k") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+knn.i.params$parameter <- as.character(knn.i.params$parameter)
+knn.i.params['parameter'] <- as.character(knn.i.params['parameter'])
+knn.i.params['parameter'] <-  str_c('k = ', knn.i.params['parameter'])
+
+ridge.params <- ridge.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("lambda", "prob_threshold") %>%
+  mutate("Model" = "Ridge Regression Standard Model") %>%
+  rename("parameter" = "lambda") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+ridge.params$parameter <- as.character(ridge.params$parameter)
+ridge.params['parameter'] <- as.character(ridge.params['parameter'])
+ridge.params['parameter'] <-  str_c('lambda = ', ridge.params['parameter'])
+
+ridge.i.params <- ridge.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("lambda", "prob_threshold") %>%
+  mutate("Model" = "Ridge Regression Interaction Model") %>%
+  rename("parameter" = "lambda") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+ridge.i.params$parameter <- as.character(ridge.i.params$parameter)
+ridge.i.params['parameter'] <- as.character(ridge.i.params['parameter'])
+ridge.i.params['parameter'] <-  str_c('lambda = ', ridge.i.params['parameter'])
+
+rf.params2 <- rf.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("mtry", "prob_threshold") %>%
+  mutate("Model" = "Random Forest Standard Model") %>%
+  rename("parameter" = "mtry") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+rf.params2$parameter <- as.character(rf.params2$parameter)
+rf.params2['parameter'] <- as.character(rf.params2['parameter'])
+rf.params2['parameter'] <-  str_c('mtry = ', rf.params2['parameter'],
+                                  ', ntrees = ', rf.params['ntree'])
+rf.i.params2 <- rf.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("mtry", "prob_threshold") %>%
+  mutate("Model" = "Random Forest Interaction Model") %>%
+  rename("parameter" = "mtry") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+rf.i.params2$parameter <- as.character(rf.i.params2$parameter)
+rf.i.params2['parameter'] <- as.character(rf.i.params2['parameter'])
+rf.i.params2['parameter'] <-  str_c('mtry = ', rf.i.params2['parameter'],
+                                  ', ntrees = ', rf.i.params['ntree'])
+svm.params <- svm.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("C", "prob_threshold") %>%
+  mutate("Model" = "SVM Standard Model, Radial Kernel") %>%
+  rename("parameter" = "C") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+svm.params$parameter <- as.character(svm.params$parameter)
+svm.params['parameter'] <- as.character(svm.params['parameter'])
+svm.params['parameter'] <-  str_c('C = ', svm.params['parameter'],
+                                  ', sigma = ', svm.fit$bestTune['sigma'])
+
+svm.i.params <- svm.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("C", "prob_threshold") %>%
+  mutate("Model" = "SVM Interaction Model, Radial Kernel") %>%
+  rename("parameter" = "C") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+svm.fit.i$bestTune['sigma'] <- svm.fit.i$bestTune['sigma'] %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+svm.i.params$parameter <- as.character(svm.i.params$parameter)
+svm.i.params['parameter'] <- as.character(svm.i.params['parameter'])
+svm.i.params['parameter'] <-  str_c('C = ', svm.i.params['parameter'],
+                                  ', sigma = ', svm.fit.i$bestTune['sigma'])
+
+# merging threshold rows into comparison data frame
+params <- bind_rows(lr.params, lr.i.params, 
+                        lda.params, lda.i.params,
+                        qda.params, qda.i.params,
+                        knn.params, knn.i.params,
+                        ridge.params, ridge.i.params,
+                        rf.params2, rf.i.params2,
+                        svm.params, svm.i.params) %>%
+  na_if(., "none") %>%
+  rename("Parameter" = "parameter", "Threshold" = "prob_threshold") %>%
+  relocate("Model","Threshold")
+
+# generating table
+params %>%
+  knitr::kable(caption = "Model Parameter and Threshold Table - 
+               10x Cross-Validation") %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kable_styling(latex_options = "HOLD_position", position = "center")
+```
+
+
+```{r Training Performance Comparisons and Results Table, fig.align='center', fig.show="hold"}
+# creating new data frame and naming columns
+comparison <- data.frame(matrix(nrow = 14, ncol = 6)) 
+
+comparison.names <- c("Model", "Accuracy", "FNR", "FPR", "Dist", "F1")
+
+colnames(comparison) <- comparison.names
+comparison["Model"] <- model.names
+
+
+# pulling individual model stats from generated thresholds
+lr.stats <- lr.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "Logistic Regression Standard Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+lr.i.stats <- lr.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "Logistic Regression Interaction Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+lda.stats <- lda.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "LDA Standard Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+lda.i.stats <- lda.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "LDA Interaction Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+qda.stats <- qda.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "QDA Standard Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+qda.i.stats <- qda.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "QDA Interaction Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+knn.stats <- knn.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  slice_max(prob_threshold) %>%
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "KNN Standard Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+knn.i.stats <- knn.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  slice_max(prob_threshold) %>%
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "KNN Interaction Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+ridge.stats <- ridge.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "Ridge Regression Standard Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+ridge.i.stats <- ridge.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "Ridge Regression Interaction Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+rf.stats <- rf.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "Random Forest Standard Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+rf.i.stats <- rf.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "Random Forest Interaction Model") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+svm.stats <- svm.thres %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "SVM Standard Model, Radial Kernel") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+svm.i.stats <- svm.thres.i %>% 
+  slice_max(Accuracy) %>%
+  slice_min(FNR) %>% 
+  dplyr::select("Accuracy", "FNR", "FPR", "Dist", "F1") %>%
+  mutate("Model" = "SVM Interaction Model, Radial Kernel") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+# AUC list
+modelAUCs <- c(lr.ROC, lr.ROC.i,
+               lda.ROC, lda.ROC.i,
+               qda.ROC, qda.ROC.i,
+               knn.ROC, knn.ROC.i,
+               ridge.ROC, ridge.ROC.i,
+               rf.ROC, rf.ROC.i,
+               svm.ROC, svm.ROC.i)
+ 
+# merging threshold rows into comparison data frame
+comparison <- bind_rows(lr.stats, lr.i.stats, 
+                        lda.stats, lda.i.stats,
+                        qda.stats, qda.i.stats,
+                        knn.stats, knn.i.stats,
+                        ridge.stats, ridge.i.stats,
+                        rf.stats, rf.i.stats,
+                        svm.stats, svm.i.stats) %>%
+  na_if(., "none") %>%
+  relocate("Model","Accuracy")
+
+# merging AUCs and rounding values
+comparison <- comparison %>%
+  mutate(AUC = modelAUCs) %>%
+  relocate("AUC", .after = "Accuracy") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+# best model for highlighting
+findbest <- comparison %>% 
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+bestmodel <- which(findbest$Model == comparison$Model)
+
+# converting accuracy, FNR, and FPR into strings to make percentages
+comparison$Accuracy <- 100* comparison$Accuracy
+comparison$Accuracy <- as.character(comparison$Accuracy)
+comparison$Accuracy <-  str_c(comparison$Accuracy, '%')
+
+comparison$FNR <- 100* comparison$FNR
+comparison$FNR <- as.character(comparison$FNR)
+comparison$FNR <-  str_c(comparison$FNR, '%')
+
+comparison$FPR <- 100* comparison$FPR
+comparison$FPR <- as.character(comparison$FPR)
+comparison$FPR <-  str_c(comparison$FPR, '%')
+
+# generating table
+comparison %>%
+  knitr::kable(caption = "Model Statistic Comparison Table - 
+               10x Cross-Validation") %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::row_spec(row = bestmodel, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+  kable_styling(latex_options = "HOLD_position", position = "center")
+```
+
+```{r Holdout Performance Comparisons and Results Table, fig.align='center', fig.show="hold"}
+comparison.holdout <- data.frame(matrix(nrow = 14, ncol = 5)) 
+
+holdout.names <- c("Model", "Accuracy", "FNR", "FPR", "F1")
+
+colnames(comparison.holdout) <- holdout.names
+comparison.holdout["Model"] <- model.names
+
+# generating values for table
+accuracies <- c(lr.cm$overall['Accuracy'], 
+                lr.cm.i$overall['Accuracy'],
+                lda.cm$overall['Accuracy'], 
+                lda.cm.i$overall['Accuracy'],
+                qda.cm$overall['Accuracy'], 
+                qda.cm.i$overall['Accuracy'],
+                knn.cm$overall['Accuracy'],
+                knn.cm.i$overall['Accuracy'],
+                ridge.cm$overall['Accuracy'], 
+                ridge.cm.i$overall['Accuracy'],
+                rf.cm$overall['Accuracy'], 
+                rf.cm.i$overall['Accuracy'],
+                svm.cm$overall['Accuracy'],
+                svm.cm.i$overall['Accuracy'])
+
+fnr <- c(mean(lr.cm$FNR['Sensitivity']),
+         mean(lr.cm$FNR['Sensitivity']),
+         mean(lda.cm$FNR['Sensitivity']),
+         mean(lda.cm.i$FNR['Sensitivity']),
+         mean(qda.cm$FNR['Sensitivity']),
+         mean(qda.cm.i$FNR['Sensitivity']),
+         mean(knn.cm$FNR['Sensitivity']),
+         mean(knn.cm.i$FNR['Sensitivity']),
+         mean(ridge.cm$FNR['Sensitivity']),
+         mean(ridge.cm.i$FNR['Sensitivity']),
+         mean(rf.cm$FNR['Sensitivity']),
+         mean(rf.cm.i$FNR['Sensitivity']),
+         mean(svm.cm$FNR['Sensitivity']), 
+         mean(svm.cm.i$FNR['Sensitivity']))
+
+fpr <- c(mean(lr.cm$FPR['Specificity']),
+         mean(lr.cm.i$FPR['Specificity']),
+         mean(lda.cm$FPR['Specificity']),
+         mean(lda.cm.i$FPR['Specificity']),
+         mean(qda.cm$FPR['Specificity']),
+         mean(qda.cm.i$FPR['Specificity']),
+         mean(knn.cm$FPR['Specificity']),
+         mean(knn.cm.i$FPR['Specificity']),
+         mean(ridge.cm$FPR['Specificity']),
+         mean(ridge.cm.i$FPR['Specificity']),
+         mean(rf.cm$FPR['Specificity']),
+         mean(rf.cm.i$FPR['Specificity']),
+         mean(svm.cm$FPR['Specificity']), 
+         mean(svm.cm.i$FPR['Specificity']))
+
+f1 <- c(lr.cm$byClass['F1'], 
+        lr.cm.i$byClass['F1'],
+        lda.cm$byClass['F1'], 
+        lda.cm.i$byClass['F1'],
+        qda.cm$byClass['F1'], 
+        qda.cm.i$byClass['F1'],
+        knn.cm$byClass['F1'], 
+        knn.cm.i$byClass['F1'],
+        ridge.cm$byClass['F1'], 
+        ridge.cm.i$byClass['F1'],
+        rf.cm$byClass['F1'], 
+        rf.cm.i$byClass['F1'],
+        svm.cm$byClass['F1'], 
+        svm.cm.i$byClass['F1'])
+
+holdoutAUCs <- c(lr.holdout, lr.holdout.i,
+               lda.holdout, lda.holdout.i,
+               qda.holdout, qda.holdout.i,
+               knn.holdout, knn.holdout.i,
+               ridge.holdout, ridge.holdout.i,
+               rf.holdout, rf.holdout.i,
+               svm.holdout, svm.holdout.i)
+
+# merging data vectors into holdout comparison data frame
+comparison.holdout <- comparison.holdout %>%
+  mutate(Accuracy = accuracies) %>%
+  mutate(AUC = holdoutAUCs) %>%
+  mutate(FNR = fnr) %>%
+  mutate(FPR = fpr) %>%
+  mutate(F1 = f1) %>%
+  na_if(., "none") %>%
+  relocate("Model","Accuracy") %>%
+  relocate("AUC", .after = "Accuracy") %>%
+  mutate(across(where(is.numeric), ~ round(., 5)))
+
+# best model for highlighting
+findbest.holdout <- comparison.holdout %>% 
+  slice(which.max(Accuracy)) %>%
+  slice(which.min(FNR))
+best.holdout <- which(findbest.holdout$Model == comparison.holdout$Model)
+
+# converting accuracy, FNR, and FPR into strings to make percentages
+comparison.holdout$Accuracy <- 100* comparison.holdout$Accuracy
+comparison.holdout$Accuracy <- as.character(comparison.holdout$Accuracy)
+comparison.holdout$Accuracy <-  str_c(comparison.holdout$Accuracy, '%')
+
+comparison.holdout$FNR <- 100* comparison.holdout$FNR
+comparison.holdout$FNR <- as.character(comparison.holdout$FNR)
+comparison.holdout$FNR <-  str_c(comparison.holdout$FNR, '%')
+
+comparison.holdout$FPR <- 100* comparison.holdout$FPR
+comparison.holdout$FPR <- as.character(comparison.holdout$FPR)
+comparison.holdout$FPR <-  str_c(comparison.holdout$FPR, '%')
+
+# generating table
+comparison.holdout %>%
+  knitr::kable(caption = "Model Statistic Comparison Table - Holdout Set") %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::row_spec(row = best.holdout, bold = TRUE, 
+                         background = '#D3D3D3') %>%
+  kable_styling(latex_options = "HOLD_position", position = "center")
+```
+
+
+# Conclusions
+
+This study reveled the best performing algorithm in the cross-validation testing was the support vector machines standard model using a radial kernel. This model had extremely high accuracy at 99.719% and a low false negative and false positive rates at 0.140% and 4.530%, respectively. The model was tuned with  parameters $C = 117.828$ and $\sigma = 10$. This model didn't necessarily have the best FNR, FPR, or even AUC, but it did have the highest accuracy. 
+
+It was not too surprising to have the SVM algorithm as the best performing on this data set as SVM models tend to be to one of the most accurate classification methods available. Additionally, during exploratory data analysis, it appeared the classification divides were not perfectly linear. The SVM standard model, however, was not the best performing model during testing with the holdout data. This was also expected as during EDA, there were clear differences between the training and holdout sets. 
+
+Instead, the logistic regression models were the best, both performing with an accuracy of 99.866%, a false negative rate of 0.072%, and a false positive rate of 6.647%. The logistic regression model with an interaction effect between $Green$ and $Blue$ actually returned slightly higher AUC of 0.99973 where the standard logistic regression model's AUC was 0.99939. 
+
+These results were slightly unexpected as the logistic regression model with the interaction effect was middle-tiered in the performance with the training set. Additionally, logistic regression is a linear approach, which contradicts the best performing model with the training data. Perhaps this should have been more expected based on the differences between the test and holdout data sets.
+
+Overall, the recommended algorithm for detecting blue tarps in Haiti is the logistic regression standard model. Evidence supporting the selection of the logistic regression standard model is the decent performance with the training data, which contained fewer data points than the holdout set, and the best performance (tied with the interaction effect logistic regression model) on the holdout set performance. 
+
+Despite the AUC differences, the standard model would still be preferred over the interaction model due to its simplicity, ease of interpretability, and high-performing results with the holdout data. There was no clear consistent benefit in the models to include the interaction effect throughout any of the algorithms, though additional interactions may be useful for consideration in future studies, such as an interaction between $Red$ and $Green$ due to the cone relationship in the human eye and the prevalence of Red-Green Colorblindness. 
+
+In addition to other interaction effects between variables being included in models for future studies, some other methods that may be considered are SVM with a linear kernel and neural networks. A linear kernel may be considered simply because though it will likely not perform well in the training set, it may perform better with the same holdout set as the logistic regression models did. Neural networks may be good to consider as this is imagery data and though pulling the pixel makeup of the image out is possible, it may not be as efficient as neural networks ability to consider the image as a whole. 
+
+It would be also be curious to examine the pixels considering their physical location by using the longitude and latitude. this could allow exploration of neighboring pixel classification in terms of physical location. For example, if there is a blue tarp in one pixel is the neighboring pixel is also a blue tarp? Or if one pixel is vegetation what is the likelihood of its neighboring pixel also being vegetation? A study of this magnitude has the potential to assist with predictability and possibly further decrease false negative and false positive rates. 
+
+Finally, although the standard logistic regression model is recommended based on the training and holdout set performance, it would be interesting to test this algorithm with data from disasters affecting locations other than Haiti. Blue is not a common color naturally, however if there was a disaster in Australia, would the makeup of the pixel dramatically affect the performance of the algorithm and therefore the aid response. 
